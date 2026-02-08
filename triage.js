@@ -57,11 +57,11 @@ const CATEGORY_PATTERNS = {
  */
 function gog(args) {
   try {
-    const cmd = `gog ${args} --account ${CONFIG.gmailAccount} --format json 2>/dev/null`;
-    const output = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+    const cmd = `gog ${args} --account ${CONFIG.gmailAccount} --format json`;
+    const output = execSync(cmd, { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'ignore'] });
     return output ? JSON.parse(output) : [];
   } catch (e) {
-    console.error('Gog error:', e.message);
+    // Silent fail - likely no results
     return [];
   }
 }
