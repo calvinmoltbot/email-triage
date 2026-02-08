@@ -19,6 +19,7 @@ const CONFIG = {
 };
 
 // Category detection patterns
+// IMPORTANT: Order matters! More specific categories should come first.
 const CATEGORY_PATTERNS = {
   'insurance/renewal': {
     keywords: ['renewal', 'renew by', 'expires', 'expiring', 'policy ending', 'renew your policy'],
@@ -45,16 +46,18 @@ const CATEGORY_PATTERNS = {
     senderPatterns: [/delivery/i, /courier/i, /sainsbury/i, /amazon/i, /dhl/i, /ups/i, /fedex/i],
     action: 'calendar-event'
   },
+  'subscription/renewal': {
+    // Check this BEFORE utilities - subscriptions often have "invoice" or "receipt" 
+    keywords: ['subscription', 'annual subscription', 'yearly subscription', 'auto-renew', 'automatic renewal', 'renewal date', 'subscription renewal', 'annual plan', 'yearly plan', 'will renew', 'renewing on', 'receipt from', 'invoice from', 'your receipt', 'your invoice'],
+    senderPatterns: [/1password/i, /ground.?news/i, /substack/i, /patreon/i, /netflix/i, /spotify/i, /subscription/i, /membership/i],
+    contentPatterns: [/1password/i, /ground.?news/i, /substack/i, /patreon/i, /netflix/i, /spotify/i, /notion/i, /dropbox/i, /adobe/i],
+    action: 'subscription-reminder',
+    reminderDaysBefore: 30  // Remind 30 days before renewal to decide
+  },
   'utilities/bill-due': {
     keywords: ['bill due', 'payment due', 'statement', 'invoice'],
     senderPatterns: [/energy/i, /gas/i, /electric/i, /water/i, /broadband/i, /phone/i, /utility/i],
     action: 'deadline-action'
-  },
-  'subscription/renewal': {
-    keywords: ['subscription', 'annual subscription', 'yearly subscription', 'auto-renew', 'automatic renewal', 'renewal date', 'subscription renewal', 'annual plan', 'yearly plan', 'will renew', 'renewing on'],
-    senderPatterns: [/1password/i, /ground.?news/i, /substack/i, /patreon/i, /netflix/i, /spotify/i, /subscription/i, /membership/i],
-    action: 'subscription-reminder',
-    reminderDaysBefore: 30  // Remind 30 days before renewal to decide
   }
 };
 
@@ -173,13 +176,19 @@ function classifyEmail(email) {
     const hasKeyword = config.keywords.some(kw => text.includes(kw.toLowerCase()));
     
     // Check sender pattern
-    const hasSenderMatch = config.senderPatterns.some(pattern => pattern.test(from));
+    const hasSenderMatch = config.senderPatterns?.some(pattern => pattern.test(from)) || false;
     
-    if (hasKeyword || hasSenderMatch) {
+    // Check content patterns (for forwarded emails where sender is the forwarder)
+    const originalText = `${email.subject} ${email.snippet || ''}`;
+    const hasContentMatch = config.contentPatterns?.some(pattern => pattern.test(originalText)) || false;
+    
+    if (hasKeyword || hasSenderMatch || hasContentMatch) {
+      const confidence = (hasKeyword && hasSenderMatch) || (hasKeyword && hasContentMatch) ? 'high' : 'medium';
       return {
         category,
         action: config.action,
-        confidence: hasKeyword && hasSenderMatch ? 'high' : 'medium'
+        reminderDaysBefore: config.reminderDaysBefore,
+        confidence
       };
     }
   }
@@ -470,7 +479,15 @@ function processEmail(email) {
   
   // For subscriptions, create a calendar reminder to decide
   let calendarEvent = null;
-  if (classification.action === 'subscription-reminder' && entities.deadline) {
+  if (classification.action === 'subscription-reminder') {
+    // If no renewal date found, estimate it as 1 year from receipt date
+    if (!entities.deadline && email.date) {
+      const receiptDate = new Date(email.date);
+      const estimatedRenewal = new Date(receiptDate);
+      estimatedRenewal.setFullYear(estimatedRenewal.getFullYear() + 1);
+      entities.deadline = estimatedRenewal.toISOString().split('T')[0];
+      console.log(`  📅 Estimated renewal date: ${entities.deadline} (1 year from receipt)`);
+    }
     calendarEvent = createSubscriptionReminder(email, classification, entities);
   }
   
