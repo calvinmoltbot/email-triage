@@ -543,13 +543,18 @@ async function runTriage() {
       const result = processEmail(email);
       results.push(result);
       
-      // Mark as triaged - use thread modify command
+      // Mark as triaged and archive (remove from inbox, mark as read)
       try {
-        execSync(`gog gmail thread modify "${email.threadId || email.id}" --add "triaged-by-claw" --account ${CONFIG.gmailAccount}`, 
+        const threadId = email.threadId || email.id;
+        // Add triaged label
+        execSync(`gog gmail thread modify "${threadId}" --add "triaged-by-claw" --account ${CONFIG.gmailAccount}`, 
           { encoding: 'utf8', timeout: 10000 });
-        console.log(`  ✅ Marked as triaged`);
+        // Archive (remove from inbox) and mark as read
+        execSync(`gog gmail thread modify "${threadId}" --remove "INBOX,UNREAD" --account ${CONFIG.gmailAccount}`, 
+          { encoding: 'utf8', timeout: 10000 });
+        console.log(`  ✅ Archived and marked as read`);
       } catch (e) {
-        console.log(`  ⚠️  Could not add triaged label: ${e.message}`);
+        console.log(`  ⚠️  Could not archive: ${e.message}`);
       }
       
     } catch (e) {
