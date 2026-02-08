@@ -516,18 +516,41 @@ function isAlreadyTriaged(email) {
 }
 
 /**
+ * Archive emails that are triaged but still in inbox (cleanup)
+ */
+function archiveTriagedEmails(emails) {
+  const alreadyTriaged = emails.filter(e => isAlreadyTriaged(e));
+  if (alreadyTriaged.length === 0) return;
+  
+  console.log(`\n🧹 Cleaning up ${alreadyTriaged.length} triaged email(s) still in inbox...`);
+  for (const email of alreadyTriaged) {
+    try {
+      const threadId = email.threadId || email.id;
+      execSync(`gog gmail thread modify "${threadId}" --remove "INBOX,UNREAD" --account ${CONFIG.gmailAccount}`, 
+        { encoding: 'utf8', timeout: 10000 });
+      console.log(`  ✅ Archived: ${email.subject.substring(0, 50)}...`);
+    } catch (e) {
+      console.log(`  ⚠️  Could not archive: ${e.message}`);
+    }
+  }
+}
+
+/**
  * Main triage function
  */
 async function runTriage() {
   console.log('🔍 Starting email triage...\n');
   
-  // Fetch unread emails from authorized senders
-  const query = `(from:${CONFIG.authorizedSenders.join(' OR from:')}) is:unread`;
+  // Fetch all forwarded emails from authorized senders (inbox or unread)
+  const query = `(from:${CONFIG.authorizedSenders.join(' OR from:')}) in:inbox`;
   console.log(`Query: ${query}\n`);
   
-  const rawEmails = gog(`gmail search '${query}' --max 20`);
+  const rawEmails = gog(`gmail search '${query}' --max 50`);
   
-  // Filter out already triaged emails
+  // Archive any emails that are already triaged but still in inbox (cleanup)
+  archiveTriagedEmails(rawEmails || []);
+  
+  // Filter out already triaged emails for processing
   const emails = (rawEmails || []).filter(e => !isAlreadyTriaged(e));
   
   if (!emails || emails.length === 0) {
