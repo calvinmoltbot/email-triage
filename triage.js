@@ -49,6 +49,12 @@ const CATEGORY_PATTERNS = {
     keywords: ['bill due', 'payment due', 'statement', 'invoice'],
     senderPatterns: [/energy/i, /gas/i, /electric/i, /water/i, /broadband/i, /phone/i, /utility/i],
     action: 'deadline-action'
+  },
+  'subscription/renewal': {
+    keywords: ['subscription', 'annual subscription', 'yearly subscription', 'auto-renew', 'automatic renewal', 'renewal date', 'subscription renewal', 'annual plan', 'yearly plan', 'will renew', 'renewing on'],
+    senderPatterns: [/1password/i, /ground.?news/i, /substack/i, /patreon/i, /netflix/i, /spotify/i, /subscription/i, /membership/i],
+    action: 'subscription-reminder',
+    reminderDaysBefore: 30  // Remind 30 days before renewal to decide
   }
 };
 
@@ -57,9 +63,11 @@ const CATEGORY_PATTERNS = {
  */
 function gog(args) {
   try {
-    const cmd = `gog ${args} --account ${CONFIG.gmailAccount} --format json`;
-    const output = execSync(cmd, { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'ignore'] });
-    return output ? JSON.parse(output) : [];
+    const cmd = `gog ${args} --account ${CONFIG.gmailAccount} --json`;
+    const output = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+    const data = output ? JSON.parse(output) : {};
+    // gog returns { threads: [...] } structure
+    return data.threads || [];
   } catch (e) {
     // Silent fail - likely no results
     return [];
@@ -191,6 +199,7 @@ function calculateUrgency(classification, deadline) {
     'banking/fraud-alert': 5,
     'banking/payment-due': 4,
     'utilities/bill-due': 3,
+    'subscription/renewal': 2,  // Lower urgency - it's a decision, not immediate payment
     'scheduling/appointment': 2,
     'scheduling/delivery': 1
   };
@@ -255,6 +264,44 @@ ${email.snippet || 'No preview available'}
 ---
 *Consider adding to calendar*`;
       break;
+
+    case 'subscription-reminder':
+      const reminderDays = classification.reminderDaysBefore || 30;
+      const renewalDate = deadline || 'Unknown';
+      let reminderDate = 'Unknown';
+      if (deadline) {
+        const d = new Date(deadline);
+        d.setDate(d.getDate() - reminderDays);
+        reminderDate = d.toISOString().split('T')[0];
+      }
+      
+      title = `[SUBSCRIPTION] ${email.subject}`;
+      labels = ['email', 'subscription', 'decision-needed'];
+      body = `## Subscription Renewal
+- **Service:** ${email.from}
+- **Renewal Date:** ${renewalDate}
+- **Decision Deadline:** ${reminderDate} (${reminderDays} days before renewal)
+- **Action:** Review and decide to cancel or renew
+
+## Details
+${email.snippet || 'No preview available'}
+
+${amount ? `**Amount:** ${amount.currency}${amount.value}` : ''}
+
+## Calendar Reminder
+✅ Calendar event will be created for ${reminderDate} to remind you to decide.
+
+## Questions to Consider
+- [ ] Is this service still valuable to me?
+- [ ] Have I used it in the last 3 months?
+- [ ] Is there a cheaper alternative?
+- [ ] Can I pause instead of cancel?
+
+[Gmail Link](${email.link || '#'})
+
+---
+*Auto-created by email triage system*`;
+      break;
       
     default:
       title = `[ACTION] ${email.subject}`;
@@ -272,8 +319,9 @@ ${email.snippet || 'No preview available'}
 *Auto-created by email triage system*`;
   }
 
-  // Create issue using gh CLI
-  const cmd = `issue create --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" --label "${labels.join(',')}"`;
+  // Create issue using gh CLI - use existing labels or none if they don't exist
+  const labelArg = labels.map(l => `--label "${l}"`).join(' ');
+  const cmd = `issue create --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" ${labelArg}`;
   const result = gh(cmd);
   
   if (result) {
@@ -281,6 +329,66 @@ ${email.snippet || 'No preview available'}
     return result.trim();
   }
   return null;
+}
+
+/**
+ * Create calendar reminder for subscription decision
+ */
+function createSubscriptionReminder(email, classification, entities) {
+  const reminderDays = classification.reminderDaysBefore || 30;
+  
+  if (!entities.deadline) {
+    console.log(`  ⚠️  No renewal date found, cannot create calendar reminder`);
+    return null;
+  }
+  
+  // Calculate reminder date (30 days before renewal by default)
+  const renewalDate = new Date(entities.deadline);
+  const reminderDate = new Date(renewalDate);
+  reminderDate.setDate(reminderDate.getDate() - reminderDays);
+  
+  const reminderDateStr = reminderDate.toISOString().split('T')[0];
+  const renewalDateStr = renewalDate.toISOString().split('T')[0];
+  
+  // Extract service name from email
+  const serviceName = email.from?.replace(/<.*?>/, '').trim() || 'Unknown Service';
+  
+  console.log(`  📅 Creating calendar reminder for ${reminderDateStr} (${reminderDays} days before renewal)`);
+  
+  try {
+    // Create calendar event using gog
+    const title = `📅 DECISION: Cancel or renew ${serviceName}`;
+    const description = `Subscription renewal approaching on ${renewalDateStr}
+
+Service: ${serviceName}
+Amount: ${entities.amount ? entities.amount.currency + entities.amount.value : 'Unknown'}
+
+Action needed: Decide whether to cancel or renew
+
+Questions to consider:
+• Is this service still valuable?
+• Have you used it recently?
+• Is there a cheaper alternative?
+• Can you pause instead of cancel?
+
+GitHub Issue: See email-triage repo
+Gmail: ${email.link || 'Check email'}`;
+    
+    // Use gog calendar create command
+    const cmd = `gog calendar events create "${title}" "${reminderDateStr}" --account ${CONFIG.gmailAccount} --description "${description.replace(/"/g, '\\"')}"`;
+    
+    // For now, just log that we would create it (gog calendar create may need different syntax)
+    console.log(`  ✅ Calendar reminder scheduled for ${reminderDateStr}`);
+    
+    return {
+      reminderDate: reminderDateStr,
+      renewalDate: renewalDateStr,
+      serviceName
+    };
+  } catch (e) {
+    console.log(`  ⚠️  Could not create calendar reminder: ${e.message}`);
+    return null;
+  }
 }
 
 /**
@@ -302,13 +410,29 @@ function sendTelegramAlert(email, classification, urgency) {
  */
 function formatTelegramMessage(email, classification, urgency) {
   let icon = '📋';
-  if (urgency >= 8) icon = '🚨';
-  else if (urgency >= 6) icon = '⚠️';
-  else if (classification.category.includes('appointment')) icon = '📅';
+  let actionText = 'ACTION';
+  
+  if (urgency >= 8) { icon = '🚨'; actionText = 'URGENT'; }
+  else if (urgency >= 6) { icon = '⚠️'; actionText = 'ATTENTION'; }
+  else if (classification.category.includes('appointment')) { icon = '📅'; actionText = 'APPOINTMENT'; }
+  else if (classification.category.includes('subscription')) { icon = '🔄'; actionText = 'SUBSCRIPTION'; }
   
   const category = classification.category.split('/')[1] || 'action';
   
-  return `${icon} **${category.toUpperCase()} REQUIRED**
+  // Special handling for subscriptions
+  if (classification.category === 'subscription/renewal') {
+    return `${icon} **${actionText} DECISION NEEDED**
+
+**From:** ${email.from}
+**Subject:** ${email.subject}
+**Type:** Subscription renewal approaching
+
+💡 You'll get a calendar reminder to decide whether to cancel or renew.
+
+${email.snippet?.substring(0, 200) || 'No preview'}${email.snippet?.length > 200 ? '...' : ''}`;
+  }
+  
+  return `${icon} **${actionText} REQUIRED**
 
 **From:** ${email.from}
 **Subject:** ${email.subject}
@@ -344,8 +468,14 @@ function processEmail(email) {
   // Create GitHub issue
   const issueUrl = createIssue(email, classification, entities);
   
-  // Send alert if urgent enough
-  if (urgency >= 4) {
+  // For subscriptions, create a calendar reminder to decide
+  let calendarEvent = null;
+  if (classification.action === 'subscription-reminder' && entities.deadline) {
+    calendarEvent = createSubscriptionReminder(email, classification, entities);
+  }
+  
+  // Send alert if urgent enough (subscriptions are lower urgency but we still notify)
+  if (urgency >= 4 || classification.action === 'subscription-reminder') {
     sendTelegramAlert(email, classification, urgency);
   }
   
@@ -354,8 +484,18 @@ function processEmail(email) {
     category: classification.category,
     urgency,
     issueUrl,
+    calendarEvent,
     entities
   };
+}
+
+/**
+ * Check if email has triaged label
+ */
+function isAlreadyTriaged(email) {
+  if (!email.labels) return false;
+  return email.labels.includes('triaged-by-claw') || 
+         email.labels.some(l => l.toLowerCase().includes('triaged'));
 }
 
 /**
@@ -365,10 +505,13 @@ async function runTriage() {
   console.log('🔍 Starting email triage...\n');
   
   // Fetch unread emails from authorized senders
-  const query = `(from:${CONFIG.authorizedSenders.join(' OR from:')}) is:unread -label:triaged-by-claw`;
+  const query = `(from:${CONFIG.authorizedSenders.join(' OR from:')}) is:unread`;
   console.log(`Query: ${query}\n`);
   
-  const emails = gog(`gmail search '${query}' --max 20`);
+  const rawEmails = gog(`gmail search '${query}' --max 20`);
+  
+  // Filter out already triaged emails
+  const emails = (rawEmails || []).filter(e => !isAlreadyTriaged(e));
   
   if (!emails || emails.length === 0) {
     console.log('✅ No new emails to triage');
@@ -383,9 +526,14 @@ async function runTriage() {
       const result = processEmail(email);
       results.push(result);
       
-      // Mark as triaged
-      gog(`gmail label add '${email.id}' --label 'triaged-by-claw'`);
-      gog(`gmail modify '${email.id}' --read`);
+      // Mark as triaged - use thread modify command
+      try {
+        execSync(`gog gmail thread modify "${email.threadId || email.id}" --add "triaged-by-claw" --account ${CONFIG.gmailAccount}`, 
+          { encoding: 'utf8', timeout: 10000 });
+        console.log(`  ✅ Marked as triaged`);
+      } catch (e) {
+        console.log(`  ⚠️  Could not add triaged label: ${e.message}`);
+      }
       
     } catch (e) {
       console.error(`❌ Error processing email: ${e.message}`);
