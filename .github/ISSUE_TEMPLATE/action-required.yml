@@ -1,0 +1,38 @@
+name: Action Required
+description: Action needed but no specific deadline
+labels: ["email", "action-required"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Source"
+  - type: input
+    id: sender
+    attributes:
+      label: From
+      placeholder: sender@example.com
+  - type: input
+    id: received
+    attributes:
+      label: Received
+      placeholder: 2026-02-08
+  - type: input
+    id: gmail_link
+    attributes:
+      label: Gmail Link
+      placeholder: https://mail.google.com/...
+  - type: markdown
+    attributes:
+      value: "## Action Required"
+  - type: textarea
+    id: action
+    attributes:
+      label: What needs to be done?
+      placeholder: Reply to email, review document, make decision...
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      placeholder: Background information...
+  - type: markdown
+    attributes:
+      value: "---\n*Add a due date if one becomes known.*"

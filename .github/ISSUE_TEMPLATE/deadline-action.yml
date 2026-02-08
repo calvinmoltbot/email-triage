@@ -1,0 +1,56 @@
+name: Deadline-Based Action
+description: Email requiring action by a specific deadline
+labels: ["email", "action-required", "deadline-tracked"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Email Source"
+  - type: input
+    id: sender
+    attributes:
+      label: From
+      placeholder: sender@example.com
+  - type: input
+    id: received
+    attributes:
+      label: Received
+      placeholder: 2026-02-08
+  - type: input
+    id: gmail_link
+    attributes:
+      label: Gmail Link
+      placeholder: https://mail.google.com/...
+  - type: markdown
+    attributes:
+      value: "## Deadline"
+  - type: input
+    id: due_date
+    attributes:
+      label: Due Date
+      placeholder: 2026-02-15
+  - type: input
+    id: days_remaining
+    attributes:
+      label: Days Remaining
+      placeholder: "7"
+  - type: markdown
+    attributes:
+      value: "## Action Required"
+  - type: textarea
+    id: action
+    attributes:
+      label: What needs to be done?
+      placeholder: Renew insurance policy, pay bill, submit form...
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      placeholder: Policy number, amount, reference numbers...
+  - type: input
+    id: amount
+    attributes:
+      label: Amount (if applicable)
+      placeholder: £450
+  - type: markdown
+    attributes:
+      value: "---\n*This issue will be updated with reminders as the deadline approaches.*"

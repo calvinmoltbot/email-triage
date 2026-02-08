@@ -1,0 +1,48 @@
+name: Appointment
+description: Meeting, appointment, or scheduled event
+labels: ["email", "appointment", "calendar-created"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Event Details"
+  - type: input
+    id: event_type
+    attributes:
+      label: Type
+      placeholder: Medical / Meeting / Service / Social
+  - type: input
+    id: date
+    attributes:
+      label: Date
+      placeholder: 2026-02-15
+  - type: input
+    id: time
+    attributes:
+      label: Time
+      placeholder: 14:30
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      placeholder: Clinic name, address, or video link
+  - type: input
+    id: provider
+    attributes:
+      label: With
+      placeholder: Dr. Smith / Company name
+  - type: markdown
+    attributes:
+      value: "## Source"
+  - type: input
+    id: gmail_link
+    attributes:
+      label: Gmail Link
+      placeholder: https://mail.google.com/...
+  - type: markdown
+    attributes:
+      value: "## Calendar\n✅ Event created - [View in Calendar]({{calendar_link}})"
+  - type: textarea
+    id: prep
+    attributes:
+      label: Preparation Notes
+      placeholder: Documents to bring, questions to ask...
